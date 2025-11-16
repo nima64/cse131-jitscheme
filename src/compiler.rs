@@ -14,20 +14,20 @@ struct CompileCtx {
     loop_depth: i32,
     current_loop_id: i32,
     shared_ctx: Rc<RefCell<SharedCompileCtx>>,
-    defns: Rc<Vec<Defn>>
+    defns: Rc<Vec<Defn>>,
+    env: HashMap<String, i32>
 }
 
 struct SharedCompileCtx{
     label_counter: i32,
-    max_depth: i32
+    max_depth: i32,
+    define_env: HashMap<String, Box<i64>>
 }
 
 
 fn compile_expr_define_env(
     e: &Expr,
     stack_depth: i32,
-    env: &HashMap<String, i32>,
-    define_env: &mut HashMap<String, Box<i64>>,
     ctx: CompileCtx, // Pass by value (copied each call)
 ) -> Vec<Instr> {
     // Track max depth
@@ -42,10 +42,10 @@ fn compile_expr_define_env(
         Expr::Number(n) => vec![Instr::Mov(Reg::Rax, *n)],
         Expr::Id(name) => {
             // Check env (stack) first for local variables
-            if let Some(offset) = env.get(name) {
+            if let Some(offset) = ctx.env.get(name) {
                 vec![Instr::MovFromStack(Reg::Rax, *offset)]
             // If not in env, check repl_env for defined variables
-            } else if let Some(boxed_value) = define_env.get(name) {
+            } else if let Some(boxed_value) = ctx.shared_ctx.borrow().define_env.get(name) {
                 println!("value held in {}: {}", name, untag_number(**boxed_value));
                 let addr = boxed_value.as_ref() as *const i64 as i64;
                 vec![Instr::Mov(Reg::Rax, addr),
@@ -57,7 +57,7 @@ fn compile_expr_define_env(
         }
         Expr::UnOp(op, subexpr) => {
             let mut instrs =
-                compile_expr_define_env(subexpr, stack_depth, env, define_env, ctx.clone());
+                compile_expr_define_env(subexpr, stack_depth, ctx.clone());
             match op {
                 Op1::Add1 => {
                     instrs.push(Instr::Test(Reg::Rax, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
@@ -102,14 +102,12 @@ fn compile_expr_define_env(
         }
         Expr::BinOp(op, e1, e2) => {
             let mut instrs =
-                compile_expr_define_env(e1, stack_depth, env, define_env, ctx.clone());
+                compile_expr_define_env(e1, stack_depth, ctx.clone());
             instrs.push(Instr::MovToStack(Reg::Rax, stack_depth));
             // e2 is on rax and e1 is on the stack
             instrs.extend(compile_expr_define_env(
                 e2,
                 stack_depth + 8,
-                env,
-                define_env,
                 ctx.clone(),
             ));
             match op {
@@ -198,9 +196,11 @@ fn compile_expr_define_env(
         }
         Expr::Let(bindings, body) => {
             let mut instrs = Vec::new();
-            let mut new_env = env.clone();
+            let mut new_env = ctx.env.clone();
             let mut current_depth = stack_depth;
             let mut duplicate_binding = HashMap::new();
+            let mut current_ctx: CompileCtx = ctx.clone();
+
             for (var, val_expr) in bindings {
                 if duplicate_binding.contains_key(var) {
                     panic!("Duplicate binding");
@@ -209,9 +209,7 @@ fn compile_expr_define_env(
                 instrs.extend(compile_expr_define_env(
                     val_expr,
                     current_depth,
-                    &new_env,
-                    define_env,
-                    ctx.clone(),
+                    current_ctx.clone(),
                 ));
                 instrs.push(Instr::MovToStack(Reg::Rax, current_depth));
 
@@ -219,22 +217,23 @@ fn compile_expr_define_env(
                 current_depth += 8;
             }
 
+            // Create new context with updated env for body
+            current_ctx.env = new_env;
             instrs.extend(compile_expr_define_env(
                 body,
                 current_depth,
-                &new_env,
-                define_env,
-                ctx.clone(),
+                current_ctx,
             ));
             instrs
         }
         Expr::Define(name, e) => {
-            let instrs = compile_expr_define_env(e, stack_depth, env, define_env, ctx.clone());
+            let instrs = compile_expr_define_env(e, stack_depth, ctx.clone());
             let val = jit_code(&instrs);
 
             let boxed_val = Box::new(val);
-            if !define_env.contains_key(name) {
-                define_env.insert(name.clone(), boxed_val);
+            let mut shared = ctx.shared_ctx.borrow_mut();
+            if !shared.define_env.contains_key(name) {
+                shared.define_env.insert(name.clone(), boxed_val);
             } else {
                 println!("Duplicate binding");
             }
@@ -254,8 +253,6 @@ fn compile_expr_define_env(
                 instrs.extend(compile_expr_define_env(
                     expr,
                     stack_depth,
-                    env,
-                    define_env,
                     ctx.clone(),
                 ));
             }
@@ -282,8 +279,6 @@ fn compile_expr_define_env(
             instrs.extend(compile_expr_define_env(
                 e,
                 stack_depth,
-                env,
-                define_env,
                 loop_ctx.clone(),
             ));
             instrs.push(Instr::Jmp(loop_label.clone()));
@@ -298,8 +293,6 @@ fn compile_expr_define_env(
             instrs.extend(compile_expr_define_env(
                 e,
                 stack_depth,
-                env,
-                define_env,
                 ctx.clone(),
             ));
             let loop_end_label = format!("endloop_{}", ctx.current_loop_id);
@@ -307,8 +300,11 @@ fn compile_expr_define_env(
             instrs
         }
         Expr::Set(name, e) => {
-            if !env.contains_key(name) && !define_env.contains_key(name) {
-                panic!("Unbound variable identifier {}", name);
+            {
+                let shared = ctx.shared_ctx.borrow();
+                if !ctx.env.contains_key(name) && !shared.define_env.contains_key(name) {
+                    panic!("Unbound variable identifier {}", name);
+                }
             }
 
             let mut instrs = vec![];
@@ -316,18 +312,19 @@ fn compile_expr_define_env(
             instrs.extend(compile_expr_define_env(
                 e,
                 stack_depth,
-                env,
-                define_env,
                 ctx.clone(),
             ));
 
-            if let Some(offset) = env.get(name) {
+            if let Some(offset) = ctx.env.get(name) {
                 instrs.push(Instr::MovToStack(Reg::Rax, *offset));
-            } else if define_env.contains_key(name) {
-                // Get the pointer to the heap-allocated i64
-                let ptr_addr = &**define_env.get(name).unwrap() as *const i64 as i64;
-                instrs.push(Instr::Mov(Reg::Rcx, ptr_addr));
-                instrs.push(Instr::MovToMem(Reg::Rcx, Reg::Rax));
+            } else {
+                let shared = ctx.shared_ctx.borrow();
+                if shared.define_env.contains_key(name) {
+                    // Get the pointer to the heap-allocated i64
+                    let ptr_addr = &**shared.define_env.get(name).unwrap() as *const i64 as i64;
+                    instrs.push(Instr::Mov(Reg::Rcx, ptr_addr));
+                    instrs.push(Instr::MovToMem(Reg::Rcx, Reg::Rax));
+                }
             }
 
             instrs
@@ -347,8 +344,6 @@ fn compile_expr_define_env(
             instrs.extend(compile_expr_define_env(
                 cond,
                 stack_depth,
-                env,
-                define_env,
                 ctx.clone(),
             ));
 
@@ -360,8 +355,6 @@ fn compile_expr_define_env(
             instrs.extend(compile_expr_define_env(
                 then_expr,
                 stack_depth,
-                env,
-                define_env,
                 ctx.clone(),
             ));
 
@@ -374,8 +367,6 @@ fn compile_expr_define_env(
             instrs.extend(compile_expr_define_env(
                 else_expr,
                 stack_depth,
-                env,
-                define_env,
                 ctx.clone(),
             ));
 
@@ -408,8 +399,8 @@ fn compile_expr_define_env(
             for arg in args {
 
                 instrs.extend(compile_expr_define_env(
-                    arg, stack_depth, env,
-                    define_env, ctx.clone(),
+                    arg, stack_depth,
+                    ctx.clone(),
                 ));
                 instrs.push(Instr::Push(Reg::Rax));
             }
@@ -423,7 +414,7 @@ fn compile_expr_define_env(
             instrs
         }
         Expr::Print(e ) => {
-            let mut instrs = compile_expr_define_env(e, stack_depth, env, define_env, ctx.clone());
+            let mut instrs = compile_expr_define_env(e, stack_depth, ctx.clone());
             instrs.push(Instr::MovReg(Reg::Rdi, Reg::Rax));
             instrs.push(Instr::Call("print_fun_external".to_string()));
             instrs
@@ -439,6 +430,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
     let shared_ctx = Rc::new(RefCell::new(SharedCompileCtx {
         label_counter: 0,
         max_depth: base_input_slot,
+        define_env: std::mem::take(define_env),
     }));
 
     let ctx = CompileCtx {
@@ -446,6 +438,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
         current_loop_id: -1,
         shared_ctx: shared_ctx.clone(),
         defns: Rc::new(prog.defns.clone()),
+        env: env.clone(),
     };
 
     let mut instrs = Vec::new();
@@ -454,7 +447,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 
     for defn in &prog.defns {
         instrs.push(Instr::Label(defn.name.clone()));
-        instrs.extend(compile_defn(defn, define_env, ctx.clone()));
+        instrs.extend(compile_defn(defn, ctx.clone()));
         instrs.push(Instr::Ret);
     }
 
@@ -464,8 +457,6 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
     let body_instrs = compile_expr_define_env(
         &prog.main,
         base_input_slot + 8,
-        &env,
-        define_env,
         ctx.clone(),
     );
 
@@ -484,42 +475,46 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
     instrs.push(Instr::MovReg(Reg::Rsp, Reg::Rbp));
     instrs.push(Instr::Pop(Reg::Rbp));
 
+    // Move define_env back out
+    *define_env = std::mem::take(&mut shared_ctx.borrow_mut().define_env);
+
     instrs
 }
 
 // TODO every function have create a new env?
-pub fn compile_defn(defn: &Defn, define_env: &mut HashMap<String, Box<i64>>, mut ctx: CompileCtx) -> Vec<Instr> {
-    let mut current_depth = 8; 
-    let mut max_depth = current_depth; 
+pub fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
+    let mut current_depth = 8;
+    let mut max_depth = current_depth;
     let mut env = HashMap::new();
 
     // assume args are already allocated
     // Arguments are at positive offsets from rbp
     let num_params = defn.params.len();
     for (i, arg_name) in defn.params.iter().enumerate() {
-        // 8 +  for intial ret addr put on stack by call 
+        // 8 +  for intial ret addr put on stack by call
         let offset = 8 + ((num_params - i) * 8);
 
         env.insert(arg_name.clone(), -1 * offset as i32);
     }
 
+    // Update context with function's env
+    ctx.env = env;
+
     let body_instrs = compile_expr_define_env(
         &defn.body,
         current_depth,
-        &env,
-        define_env,
         ctx.clone(),
     );
 
     let mut instrs = Vec::new();
     instrs.push(Instr::Push(Reg::Rbp));
     instrs.push(Instr::MovReg(Reg::Rbp, Reg::Rsp));
-    instrs.push(Instr::Sub(Reg::Rsp, max_depth)); 
+    instrs.push(Instr::Sub(Reg::Rsp, max_depth));
 
     instrs.extend(body_instrs);
 
     // Epilogue
-    instrs.push(Instr::MovReg(Reg::Rsp, Reg::Rbp)); 
+    instrs.push(Instr::MovReg(Reg::Rsp, Reg::Rbp));
     instrs.push(Instr::Pop(Reg::Rbp));
 
     instrs
@@ -533,6 +528,7 @@ pub fn compile_expr(e: &Expr) -> Vec<Instr> {
     let shared_ctx = Rc::new(RefCell::new(SharedCompileCtx {
         label_counter: 0,
         max_depth: base_input_slot,
+        define_env: HashMap::new(),
     }));
 
     let mut ctx = CompileCtx {
@@ -540,13 +536,12 @@ pub fn compile_expr(e: &Expr) -> Vec<Instr> {
         current_loop_id: -1,
         shared_ctx: shared_ctx.clone(),
         defns: Rc::new(vec![]),
+        env: env.clone(),
     };
 
     let body_instrs = compile_expr_define_env(
         e,
         base_input_slot + 8,
-        &env,
-        &mut HashMap::new(),
         ctx.clone(),
     );
 
