@@ -1,3 +1,67 @@
+/** Type Checker **/ 
+
+#[derive(Debug, Clone)]
+pub enum TypeInfo{
+    Num, 
+    Bool, 
+    Nothing, 
+    Any
+}
+
+// T ≤ T
+pub fn is_subtype(t1: &TypeInfo, t2: &TypeInfo) -> bool {
+    match (t1, t2) {
+        (TypeInfo::Num,     TypeInfo::Num)
+        | (TypeInfo::Bool,  TypeInfo::Bool)
+        | (TypeInfo::Any,   TypeInfo::Any)
+        | (TypeInfo::Nothing, TypeInfo::Nothing) => true,
+
+        (_, TypeInfo::Any) => true,
+        (TypeInfo::Nothing, _) => true,
+        _ => false,
+    }
+}
+
+#[derive(Debug)]
+pub enum ExprT {
+    Number(i64, TypeInfo),
+    Boolean(bool, TypeInfo),
+    Let(Vec<(String, ExprT)>, Box<ExprT>, TypeInfo),
+    Id(String, TypeInfo),
+    UnOp(Op1, Box<ExprT>, TypeInfo),
+    Define(String, Box<ExprT>, TypeInfo),
+    Block(Vec<ExprT>, TypeInfo),
+    BinOp(Op2, Box<ExprT>, Box<ExprT>, TypeInfo),
+    If(Box<ExprT>, Box<ExprT>, Box<ExprT>, TypeInfo),
+    Loop(Box<ExprT>, TypeInfo),
+    Break(Box<ExprT>, TypeInfo),
+    Set(String, Box<ExprT>, TypeInfo),
+    FunCall(String, Vec<ExprT>, TypeInfo),
+    Print(Box<ExprT>, TypeInfo),
+    Cast(TypeInfo, Box<ExprT>, TypeInfo)
+}
+
+impl ExprT {
+    pub fn get_type_info(&self) -> &TypeInfo {
+        match self {
+            ExprT::Number(_, ti) => ti,
+            ExprT::Boolean(_, ti) => ti,
+            ExprT::Let(_, _, ti) => ti,
+            ExprT::Id(_, ti) => ti,
+            ExprT::UnOp(_, _, ti) => ti,
+            ExprT::Define(_, _, ti) => ti,
+            ExprT::Block(_, ti) => ti,
+            ExprT::BinOp(_, _, _, ti) => ti,
+            ExprT::If(_, _, _, ti) => ti,
+            ExprT::Loop(_, ti) => ti,
+            ExprT::Break(_, ti) => ti,
+            ExprT::Set(_, _, ti) => ti,
+            ExprT::FunCall(_, _, ti) => ti,
+            ExprT::Print(_, ti) => ti,
+            ExprT::Cast(_, _, ti) => ti,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Reg {
@@ -59,7 +123,9 @@ pub enum Expr {
     Break(Box<Expr>),
     Set(String, Box<Expr>),
     FunCall(String, Vec<Expr>),
-    Print(Box<Expr>)
+    Print(Box<Expr>),
+    // FunDef(String, Vec<String>, Box<Expr>), //NEED TO ADD
+
 }
 
 #[derive(Debug, Clone)]
@@ -112,14 +178,6 @@ pub enum Instr {
     Call(String),         // call label - call function
     Ret,                  // ret - return from function
     Label(String),        // label: - assembly label
-}
-
-
-#[derive(Clone, Copy)]
-pub struct CompileCtx {
-    pub loop_depth: i32,
-    pub label_counter: i32,
-    pub current_loop_id: i32,  // -1 means not in a loop, otherwise the loop's label ID
 }
 
 // Helper to check if a value is a number (tag bit is 0)
