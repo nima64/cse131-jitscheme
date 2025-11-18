@@ -26,7 +26,7 @@ struct SharedCompileCtx{
 
 
 fn compile_expr_define_env(
-    e: &Expr,
+    e: &ExprT,
     stack_depth: i32,
     ctx: CompileCtx, // Pass by value (copied each call)
 ) -> Vec<Instr> {
@@ -39,8 +39,8 @@ fn compile_expr_define_env(
     }
 
     match e {
-        Expr::Number(n) => vec![Instr::Mov(Reg::Rax, *n)],
-        Expr::Id(name) => {
+        ExprT::Number(n, _) => vec![Instr::Mov(Reg::Rax, *n)],
+        ExprT::Id(name, _) => {
             // Check env (stack) first for local variables
             if let Some(offset) = ctx.env.get(name) {
                 vec![Instr::MovFromStack(Reg::Rax, *offset)]
@@ -55,7 +55,7 @@ fn compile_expr_define_env(
                 panic!("Unbound variable identifier {}", name)
             }
         }
-        Expr::UnOp(op, subexpr) => {
+        ExprT::UnOp(op, subexpr, _) => {
             let mut instrs =
                 compile_expr_define_env(subexpr, stack_depth, ctx.clone());
             match op {
@@ -100,7 +100,7 @@ fn compile_expr_define_env(
             }
             instrs
         }
-        Expr::BinOp(op, e1, e2) => {
+        ExprT::BinOp(op, e1, e2, _) => {
             let mut instrs =
                 compile_expr_define_env(e1, stack_depth, ctx.clone());
             instrs.push(Instr::MovToStack(Reg::Rax, stack_depth));
@@ -194,7 +194,7 @@ fn compile_expr_define_env(
             }
             instrs
         }
-        Expr::Let(bindings, body) => {
+        ExprT::Let(bindings, body, _) => {
             let mut instrs = Vec::new();
             let mut new_env = ctx.env.clone();
             let mut current_depth = stack_depth;
@@ -226,7 +226,7 @@ fn compile_expr_define_env(
             ));
             instrs
         }
-        Expr::Define(name, e) => {
+        ExprT::Define(name, e, _) => {
             let instrs = compile_expr_define_env(e, stack_depth, ctx.clone());
             let val = jit_code(&instrs);
 
@@ -240,13 +240,13 @@ fn compile_expr_define_env(
 
             vec![]
         }
-        Expr::Boolean(b) => {
+        ExprT::Boolean(b, _) => {
             if *b == true {
                 return vec![Instr::Mov(Reg::Rax, TRUE_TAGGED)];
             }
             vec![Instr::Mov(Reg::Rax, FLASE_TAGGED)]
         }
-        Expr::Block(exprs) => {
+        ExprT::Block(exprs, _) => {
             let mut instrs: Vec<Instr> = vec![];
 
             for expr in exprs {
@@ -258,7 +258,7 @@ fn compile_expr_define_env(
             }
             instrs
         }
-        Expr::Loop(e) => {
+        ExprT::Loop(e, _) => {
             let loop_id = {
                 let mut shared = ctx.shared_ctx.borrow_mut();
                 let id = shared.label_counter;
@@ -285,7 +285,7 @@ fn compile_expr_define_env(
             instrs.push(Instr::Label(end_loop_label));
             instrs
         }
-        Expr::Break(e) => {
+        ExprT::Break(e, _) => {
             if ctx.loop_depth == 0 {
                 panic!("Invalid: break outside of loop");
             }
@@ -299,7 +299,7 @@ fn compile_expr_define_env(
             instrs.push(Instr::Jmp(loop_end_label));
             instrs
         }
-        Expr::Set(name, e) => {
+        ExprT::Set(name, e, _) => {
             {
                 let shared = ctx.shared_ctx.borrow();
                 if !ctx.env.contains_key(name) && !shared.define_env.contains_key(name) {
@@ -329,7 +329,7 @@ fn compile_expr_define_env(
 
             instrs
         }
-        Expr::If(cond, then_expr, else_expr) => {
+        ExprT::If(cond, then_expr, else_expr, _) => {
             let mut instrs = vec![];
             let label_id = {
                 let mut shared = ctx.shared_ctx.borrow_mut();
@@ -374,7 +374,7 @@ fn compile_expr_define_env(
 
             instrs
         }
-        Expr::FunCall(name, args) => {
+        ExprT::FunCall(name, args, _) => {
             // Find the function definition
             let defn = ctx.defns.iter().find(|d| &d.name == name);
 
@@ -413,16 +413,40 @@ fn compile_expr_define_env(
             // Result is now in RAX
             instrs
         }
-        Expr::Print(e ) => {
+        ExprT::Print(e, _) => {
             let mut instrs = compile_expr_define_env(e, stack_depth, ctx.clone());
             instrs.push(Instr::MovReg(Reg::Rdi, Reg::Rax));
             instrs.push(Instr::Call("print_fun_external".to_string()));
+            instrs
+        }
+        ExprT::Cast(target_type, e, _) => {
+            let mut instrs = compile_expr_define_env(e, stack_depth, ctx.clone());
+
+            match target_type {
+                TypeInfo::Num => {
+                    instrs.push(Instr::Test(Reg::Rax, 1));
+                    instrs.push(Instr::Jnz("bad_cast_error".to_string()));
+                }
+                TypeInfo::Bool => {
+                    instrs.push(Instr::Test(Reg::Rax, 1));
+                    instrs.push(Instr::Jz("bad_cast_error".to_string()));
+                }
+                TypeInfo::Nothing => {
+                    instrs.push(Instr::Jmp("bad_cast_error".to_string()));
+                }
+                TypeInfo::Any => {
+                    // No check needed, any value is valid
+                }
+            }
+
             instrs
         }
     }
 }
 
 pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> Vec<Instr> {
+    use crate::typechecker::annotate_any;
+
     let base_input_slot = 16;
     let mut env = HashMap::new();
     env.insert("input".to_string(), base_input_slot);
@@ -453,9 +477,9 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 
     instrs.push(Instr::Label("main_start".to_string()));
 
-
+    let main_t = annotate_any(&prog.main);
     let body_instrs = compile_expr_define_env(
-        &prog.main,
+        &main_t,
         base_input_slot + 8,
         ctx.clone(),
     );
@@ -483,6 +507,8 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 
 // TODO every function have create a new env?
 fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
+    use crate::typechecker::annotate_any;
+
     let mut current_depth = 8;
     let mut max_depth = current_depth;
     let mut env = HashMap::new();
@@ -500,8 +526,9 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
     // Update context with function's env
     ctx.env = env;
 
+    let body_t = annotate_any(&defn.body);
     let body_instrs = compile_expr_define_env(
-        &defn.body,
+        &body_t,
         current_depth,
         ctx.clone(),
     );
@@ -521,6 +548,8 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
 }
 
 pub fn compile_expr(e: &Expr) -> Vec<Instr> {
+    use crate::typechecker::annotate_any;
+
     let base_input_slot = 16; // makespace for rdi
     let mut env = HashMap::new();
     env.insert("input".to_string(), base_input_slot);
@@ -539,8 +568,9 @@ pub fn compile_expr(e: &Expr) -> Vec<Instr> {
         env: env.clone(),
     };
 
+    let expr_t = annotate_any(e);
     let body_instrs = compile_expr_define_env(
-        e,
+        &expr_t,
         base_input_slot + 8,
         ctx.clone(),
     );
@@ -573,12 +603,14 @@ pub fn jit_code_input(instrs: &Vec<Instr>, input: i64) -> i64 {
     let error_type_mismatch = ops.new_dynamic_label();
     let error_overflow = ops.new_dynamic_label();
     let error_arithmetic = ops.new_dynamic_label();
+    let error_bad_cast = ops.new_dynamic_label();
     let error_common = ops.new_dynamic_label();
     let print_fun_external = ops.new_dynamic_label();
 
     labels.insert("type_mismatch_error".to_string(), error_type_mismatch);
     labels.insert("overflow_error".to_string(), error_overflow);
     labels.insert("type_error_arithmetic".to_string(), error_arithmetic);
+    labels.insert("bad_cast_error".to_string(), error_bad_cast);
     labels.insert("print_fun_external".to_string(), print_fun_external);
     let c_func_ptr: extern "C" fn(i64) -> i64 =
         unsafe { mem::transmute(snek_error as *const ()) };
@@ -606,6 +638,9 @@ pub fn jit_code_input(instrs: &Vec<Instr>, input: i64) -> i64 {
         ; jmp =>error_common
         ; =>error_arithmetic
         ; mov rdi, 3
+        ; jmp =>error_common
+        ; =>error_bad_cast
+        ; mov rdi, 4
         ; =>error_common
         ; mov rax, QWORD c_func_ptr as i64
         ; call rax

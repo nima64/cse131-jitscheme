@@ -41,6 +41,16 @@ pub fn parse_expr(s: &Sexp) -> Expr {
                 [Sexp::Atom(S(op)), e] if op == "break" => Expr::Break(Box::new(parse_expr(e))),
                 [Sexp::Atom(S(op)), e] if op == "loop" => Expr::Loop(Box::new(parse_expr(e))),
                 [Sexp::Atom(S(op)), e] if op == "print" => Expr::Print(Box::new(parse_expr(e))),
+                [Sexp::Atom(S(op)), Sexp::Atom(S(type_name)), e] if op == "cast" => {
+                    let target_type = match type_name.as_str() {
+                        "Num" => TypeInfo::Num,
+                        "Bool" => TypeInfo::Bool,
+                        "Nothing" => TypeInfo::Nothing,
+                        "Any" => TypeInfo::Any,
+                        _ => panic!("Invalid type: {}", type_name),
+                    };
+                    Expr::Cast(target_type, Box::new(parse_expr(e)))
+                }
                 [Sexp::Atom(S(op)), e1, e2] if op == "+" => Expr::BinOp(
                     Op2::Plus,
                     Box::new(parse_expr(e1)),

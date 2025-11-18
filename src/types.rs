@@ -124,6 +124,7 @@ pub enum Expr {
     Set(String, Box<Expr>),
     FunCall(String, Vec<Expr>),
     Print(Box<Expr>),
+    Cast(TypeInfo, Box<Expr>)
     // FunDef(String, Vec<String>, Box<Expr>), //NEED TO ADD
 
 }

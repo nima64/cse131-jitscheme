@@ -62,6 +62,10 @@ pub extern "C" fn snek_error(errorcode: i64) {
             eprintln!("cannot do arithmetic on non integers");
             std::process::exit(1);
         }
+        4 => {
+            eprintln!("bad cast");
+            std::process::exit(1);
+        }
         _ => {
             eprintln!("invalid error code {}!", errorcode);
             std::process::exit(1);

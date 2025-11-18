@@ -78,6 +78,8 @@ pub fn type_check(expr: &Expr, env_t:&HashMap<String, Box<TypeInfo>>) -> ExprT {
         Expr::Id(name) => {
             if let Some(type_info) = env_t.get(name) {
                 ExprT::Id(name.clone(), *type_info.clone())
+            }else if (name == "input"){
+                ExprT::Id("input".to_string(), TypeInfo::Any)
             } else {
                 panic!("Unbound variable identifier {}", name)
             }
@@ -201,9 +203,9 @@ pub fn type_check(expr: &Expr, env_t:&HashMap<String, Box<TypeInfo>>) -> ExprT {
             let expr_t = type_check(expr, env_t);
             ExprT::Print(Box::new(expr_t), TypeInfo::Any)
         }
-        // Expr::Cast(target_type, expr) => {
-        //     let expr_t = type_check(expr, env_t);
-        //     ExprT::Cast(target_type.clone(), Box::new(expr_t), target_type.clone())
-        // }
+        Expr::Cast(target_type, expr) => {
+            let expr_t = type_check(expr, env_t);
+            ExprT::Cast(target_type.clone(), Box::new(expr_t), target_type.clone())
+        }
     }
 }
