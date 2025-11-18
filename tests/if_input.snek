@@ -1,1 +1,1 @@
-(if (< input 10) 100 200)
+(if (< (cast Num input) 10) 100 200)

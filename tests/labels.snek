@@ -1,6 +1,6 @@
 (block
-  (if (< input 0) 1 2)
-  (if (> input 5) 
+  (if (< (cast Num input) 0) 1 2)
+  (if (> (cast Num input) 5) 
       6
       5)
-  (if (< input 20) 6 7))
+  (if (< (cast Num input) 20) 6 7))

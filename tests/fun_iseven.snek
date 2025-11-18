@@ -16,6 +16,6 @@
 )
 
 (block
-  (print input)
-  (print (iseven input))
+  (print (cast Num input))
+  (print (iseven (cast Num input)))
 )

@@ -1,0 +1,10 @@
+(let ((x 10) (y 5) (flag true))
+  (let ((sum (+ x y)))
+    (let ((is_big (> sum y)))
+      (if is_big
+        (+ sum x)
+        (* sum 2)
+      )
+    )
+  )
+)

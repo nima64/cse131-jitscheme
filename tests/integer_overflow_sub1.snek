@@ -1,1 +1,1 @@
-(sub1 input)
+(sub1 (cast Num input))

@@ -1,0 +1,6 @@
+(let ((x 10) (y 5))
+  (block
+    (set! x true)
+    (+ x y)
+  )
+)

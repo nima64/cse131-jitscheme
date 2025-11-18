@@ -1,5 +1,5 @@
 #prevent deleting .s file
-.PRECIOUS: tests/%.s
+# .PRECIOUS: tests/%.s
 
 # Do not change this starting part, used by mod.rs
 UNAME := $(shell uname)

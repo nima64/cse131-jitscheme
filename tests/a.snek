@@ -1,1 +1,1 @@
-(+ 11 input)
+(+ 11 (cast Num input))

@@ -1,2 +1,2 @@
-(fun (uses_input x) (+ x input))
+(fun (uses_input x) (+ x (cast Num input)))
 (uses_input 10)

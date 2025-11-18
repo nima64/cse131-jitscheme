@@ -1,0 +1,28 @@
+(fun (intdiv a b)
+(let ((q 0) (x a))
+(loop (if (< x b)
+(break q)
+(block (set! x (- x b)) (set! q (+ q 1)))))))
+
+(fun (get8 idx a0 a1 a2 a3 a4 a5 a6 a7)
+(if (= idx 0) a0
+(if (= idx 1) a1
+(if (= idx 2) a2
+(if (= idx 3) a3
+(if (= idx 4) a4
+(if (= idx 5) a5
+(if (= idx 6) a6 a7))))))))
+
+(fun (binary_search8 target a0 a1 a2 a3 a4 a5 a6 a7)
+(let ((left 0) (right 7))
+(loop (if (> left right)
+(break -1)
+(let ((mid (intdiv (+ left right) 2))
+(val (get8 mid a0 a1 a2 a3 a4 a5 a6 a7)))
+(if (= val target)
+(break mid)
+(if (< val target)
+(set! left (+ mid 1))
+(set! right (- mid 1)))))))))
+
+(print (binary_search8 9 1 3 5 7 9 11 13 15))

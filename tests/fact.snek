@@ -12,4 +12,4 @@
     )
   )
 )
-(fact input)
+(fact (cast Num input))
