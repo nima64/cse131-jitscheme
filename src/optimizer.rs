@@ -113,6 +113,26 @@ pub fn optimize(e: &ExprT, env: HashMap<String, ExprT>) -> ExprT {
                 ExprT::Let(optimized_bindings, Box::new(optimized_body), t.clone())
             }
         }
+        
+        // If Statement Dead Code Optimization:
+        ExprT::If(cond_e, then_e, else_e, t) => {
+            let optimized_cond = optimize(cond_e, env.clone());
+            match optimized_cond {
+                ExprT::Boolean(true, _) => optimize(then_e, env.clone()),
+                ExprT::Boolean(false, _) => optimize(else_e, env.clone()),
+                _ => ExprT::If(Box::new(optimized_cond), Box::new(optimize(then_e, env.clone())), Box::new(optimize(else_e, env.clone())), t.clone())
+            }
+        }
+
+        // Cast optimization
+        ExprT::Cast(cast_t, e, t) => {
+            let optimized_e = optimize(e, env.clone());
+            if is_subtype(optimized_e.get_type_info(), &cast_t.clone()) {
+                optimized_e
+            } else {
+                ExprT::Cast(cast_t.clone(), Box::new(optimized_e), t.clone())
+            }
+        }
         _ => e.clone()
     }
 }
