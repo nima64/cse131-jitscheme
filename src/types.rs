@@ -103,7 +103,7 @@ pub enum Op2 {
 
 // Re-export constants from common module
 pub use crate::common::{
-    TRUE_TAGGED, FALSE_TAGGED, FLASE_TAGGED, BOOL_TAG, NUM_TAG,
+    TRUE_TAGGED, FALSE_TAGGED, BOOL_TAG, NUM_TAG,
     get_tag, tag_number, untag_number, format_result, parse_input,
 };
 
@@ -143,12 +143,42 @@ pub struct Prog {
 }
 
 #[derive(Debug, Clone)]
+pub enum Condition {
+    Less,
+    Greater,
+    LessEqual,
+    GreaterEqual,
+    Equal,
+    NotEqual,
+    Overflow,
+    Uncond,
+}
+
+pub enum RuntimeErr {
+    TypeMismatch,
+    Overflow,
+    ArithmeticType,
+    BadCast,
+}
+
+impl ToString for RuntimeErr {
+    fn to_string(&self) -> String {
+        match self {
+            RuntimeErr::TypeMismatch => "type_mismatch_error".to_string(),
+            RuntimeErr::Overflow => "overflow_error".to_string(),
+            RuntimeErr::ArithmeticType => "type_error_arithmetic".to_string(),
+            RuntimeErr::BadCast => "bad_cast_error".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Instr {
     // IMov(Reg, RegOrImm),
     Mov(Reg, i64), // mov register, immediate
     Add(Reg, i32), // add register, immediate
     Sub(Reg, i32), // sub register, immediate
-    iMul(Reg, Reg),
+    IMul(Reg, Reg),
     AddReg(Reg, Reg),
     MinusReg(Reg, Reg),
     MovReg(Reg, Reg),
@@ -170,15 +200,11 @@ pub enum Instr {
     Sar(Reg, i32),        // sar reg, immediate - shift arithmetic right
     Or(Reg, i64),         // or reg, immediate - for setting bits
     Test(Reg, i64),       // test reg, immediate - for checking bits
-    Jne(String),          // jne label - jump if not equal
-    Je(String),           // je label - jump if equal
-    Jz(String),           // jz label - jump if zero
-    Jnz(String),          // jnz label - jump if not zero
-    Jo(String),           // jo label - jump if overflow
-    Jmp(String),          // jmp label - unconditional jump
     Call(String),         // call label - call function
     Ret,                  // ret - return from function
     Label(String),        // label: - assembly label
+    CMov(Condition, Reg, Reg), // conditional move
+    Jump(Condition, String),
 }
 
 // Helper to check if a value is a number (tag bit is 0)

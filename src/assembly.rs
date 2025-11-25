@@ -16,7 +16,7 @@ pub fn instr_to_string(instr: &Instr) -> String {
         Instr::MinusReg(reg1, reg2) => {
             format!("sub {}, {}", reg_to_string(reg1), reg_to_string(reg2))
         }
-        Instr::iMul(reg1, reg2) => {
+        Instr::IMul(reg1, reg2) => {
             format!("imul {}, {}", reg_to_string(reg1), reg_to_string(reg2))
         }
         Instr::XorReg(reg1, reg2) => {
@@ -64,26 +64,20 @@ pub fn instr_to_string(instr: &Instr) -> String {
         Instr::Test(reg, val) => {
             format!("test {}, {}", reg_to_string(reg), val)
         }
-        Instr::Jne(label) => {
-            format!("jne {}", label)
-        }
         Instr::CmpImm(reg, val) => {
             format!("cmp {}, {}", reg_to_string(reg), val)
         }
-        Instr::Je(label) => {
-            format!("je {}", label)
-        }
-        Instr::Jnz(label) => {
-            format!("jnz {}", label)
-        }
-        Instr::Jz(label) => {
-            format!("jz {}", label)
-        }
-        Instr::Jo(label) => {
-            format!("jo {}", label)
-        }
-        Instr::Jmp(label) => {
-            format!("jmp {}", label)
+        Instr::Jump(condition, label) => {
+            match condition {
+                Condition::Less => format!("jl {}", label),
+                Condition::Greater => format!("jg {}", label),
+                Condition::LessEqual => format!("jle {}", label),
+                Condition::GreaterEqual => format!("jge {}", label),
+                Condition::Equal => format!("je {}", label),
+                Condition::NotEqual => format!("jne {}", label),
+                Condition::Overflow => format!("jo {}", label),
+                Condition::Uncond => format!("jmp {}", label),
+            }
         }
         Instr::Call(label) => {
             format!("call {}", label)
@@ -93,6 +87,19 @@ pub fn instr_to_string(instr: &Instr) -> String {
         }
         Instr::Label(label) => {
             format!("{}:", label)
+        }
+        Instr::CMov(condition, reg1, reg2) => {
+            let cond_str = match condition {
+                Condition::Less => "l",
+                Condition::Greater => "g",
+                Condition::LessEqual => "le",
+                Condition::GreaterEqual => "ge",
+                Condition::Equal => "e",
+                Condition::NotEqual => "ne",
+                Condition::Overflow => "o",
+                Condition::Uncond => panic!("Cannot have unconditional CMOV"),
+            };
+            format!("cmov{} {}, {}", cond_str, reg_to_string(reg1), reg_to_string(reg2))
         }
     }
 }
@@ -159,7 +166,7 @@ pub fn instr_to_asm(
             let r = reg.to_num();
             dynasm!(ops; .arch x64; sub Rq(r), *val);
         }
-        Instr::iMul(reg1, reg2) => {
+        Instr::IMul(reg1, reg2) => {
             let r1 = reg1.to_num();
             let r2 = reg2.to_num();
             dynasm!(ops; .arch x64 ; imul Rq(r1), Rq(r2));
@@ -256,36 +263,22 @@ pub fn instr_to_asm(
             let r = reg.to_num();
             dynasm!(ops; .arch x64; test Rq(r), *val as i32);
         }
-        Instr::Jne(label_name) => {
-            let lbl = labels.get(label_name).unwrap();
-            // let lbl = labels
-            //     .entry(label_name.clone())
-            //     .or_insert_with(|| ops.new_dynamic_label());
-            dynasm!(ops; .arch x64; jne => *lbl);
-        }
         Instr::CmpImm(reg, val) => {
             let r = reg.to_num();
             dynasm!(ops; .arch x64; cmp Rq(r), *val as i32);
         }
-        Instr::Je(label_name) => {
+        Instr::Jump(condition, label_name) => {
             let lbl = labels.get(label_name).unwrap();
-            dynasm!(ops; .arch x64; je => *lbl);
-        }
-        Instr::Jnz(label_name) => {
-            let lbl = labels.get(label_name).unwrap();
-            dynasm!(ops; .arch x64; jnz => *lbl);
-        }
-        Instr::Jz(label_name) => {
-            let lbl = labels.get(label_name).unwrap();
-            dynasm!(ops; .arch x64; jz => *lbl);
-        }
-        Instr::Jo(label_name) => {
-            let lbl = labels.get(label_name).unwrap();
-            dynasm!(ops; .arch x64; jo => *lbl);
-        }
-        Instr::Jmp(label_name) => {
-            let lbl = labels.get(label_name).unwrap();
-            dynasm!(ops; .arch x64; jmp => *lbl);
+            match condition {
+                Condition::Less => dynasm!(ops; .arch x64; jl => *lbl),
+                Condition::Greater => dynasm!(ops; .arch x64; jg => *lbl),
+                Condition::LessEqual => dynasm!(ops; .arch x64; jle => *lbl),
+                Condition::GreaterEqual => dynasm!(ops; .arch x64; jge => *lbl),
+                Condition::Equal => dynasm!(ops; .arch x64; je => *lbl),
+                Condition::NotEqual => dynasm!(ops; .arch x64; jne => *lbl),
+                Condition::Overflow => dynasm!(ops; .arch x64; jo => *lbl),
+                Condition::Uncond => dynasm!(ops; .arch x64; jmp => *lbl),
+            }
         }
         Instr::Call(label_name) => {
             let lbl = labels.get(label_name).unwrap();
@@ -297,6 +290,20 @@ pub fn instr_to_asm(
         Instr::Label(label_name) => {
             let lbl = labels.get(label_name).unwrap();
             dynasm!(ops; .arch x64; => *lbl);
+        }
+        Instr::CMov(condition, reg1, reg2) => {
+            let r1 = reg1.to_num();
+            let r2 = reg2.to_num();
+            match condition {
+                Condition::Less => dynasm!(ops; .arch x64; cmovl Rq(r1), Rq(r2)),
+                Condition::Greater => dynasm!(ops; .arch x64; cmovg Rq(r1), Rq(r2)),
+                Condition::LessEqual => dynasm!(ops; .arch x64; cmovle Rq(r1), Rq(r2)),
+                Condition::GreaterEqual => dynasm!(ops; .arch x64; cmovge Rq(r1), Rq(r2)),
+                Condition::Equal => dynasm!(ops; .arch x64; cmove Rq(r1), Rq(r2)),
+                Condition::NotEqual => dynasm!(ops; .arch x64; cmovne Rq(r1), Rq(r2)),
+                Condition::Overflow => dynasm!(ops; .arch x64; cmovo Rq(r1), Rq(r2)),
+                Condition::Uncond => panic!("Cannot have unconditional CMOV"),
+            }
         }
     }
 }

@@ -3,7 +3,6 @@
 
 pub const TRUE_TAGGED: i64 = 3;
 pub const FALSE_TAGGED: i64 = 1;
-pub const FLASE_TAGGED: i64 = 1; // Kept for backwards compatibility
 pub const BOOL_TAG: i64 = 1;
 pub const NUM_TAG: i64 = 0;
 

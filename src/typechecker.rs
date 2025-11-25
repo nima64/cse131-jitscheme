@@ -120,7 +120,7 @@ pub fn type_check(expr: &Expr, env_t:&HashMap<String, Box<TypeInfo>>) -> ExprT {
         Expr::Id(name) => {
             if let Some(type_info) = env_t.get(name) {
                 ExprT::Id(name.clone(), *type_info.clone())
-            }else if (name == "input"){
+            }else if name == "input" {
                 ExprT::Id("input".to_string(), TypeInfo::Any)
             } else {
                 panic!("Unbound variable identifier {}", name)

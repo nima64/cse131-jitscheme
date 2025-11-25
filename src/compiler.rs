@@ -1,3 +1,4 @@
+use adder::RuntimeErr;
 use dynasmrt::{dynasm, DynamicLabel, DynasmApi, DynasmLabelApi};
 use im::HashMap;
 use std::cell::RefCell;
@@ -24,6 +25,15 @@ struct SharedCompileCtx{
     define_env: HashMap<String, Box<i64>>
 }
 
+fn check(instrs: &mut Vec<Instr>, condition: Condition) {
+    instrs.push(Instr::Mov(Reg::Rcx, TRUE_TAGGED));
+    instrs.push(Instr::Mov(Reg::Rax, FALSE_TAGGED));
+    instrs.push(Instr::CMov(condition, Reg::Rax, Reg::Rcx));
+}
+
+fn err_if(instrs: &mut Vec<Instr>, condition: Condition, err: RuntimeErr) {
+    instrs.push(Instr::Jump(condition, err.to_string()));
+}
 
 fn compile_expr_define_env(
     e: &ExprT,
@@ -40,6 +50,7 @@ fn compile_expr_define_env(
 
     match e {
         ExprT::Number(n, _) => vec![Instr::Mov(Reg::Rax, *n)],
+        ExprT::Boolean(b, _) => vec![Instr::Mov(Reg::Rax, if *b {TRUE_TAGGED} else {FALSE_TAGGED})],
         ExprT::Id(name, _) => {
             // Check env (stack) first for local variables
             if let Some(offset) = ctx.env.get(name) {
@@ -59,43 +70,15 @@ fn compile_expr_define_env(
             let mut instrs =
                 compile_expr_define_env(subexpr, stack_depth, ctx.clone());
             match op {
-                Op1::Add1 => {
+                Op1::IsNum | Op1::IsBool => {
+                    instrs.push(Instr::Test(Reg::Rax, 1));
+                    check(&mut instrs, if let Op1::IsNum = op {Condition::Equal} else {Condition::NotEqual});
+                }
+                Op1::Add1 | Op1::Sub1 => {
                     instrs.push(Instr::Test(Reg::Rax, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
-                    instrs.push(Instr::Jnz("type_error_arithmetic".to_string())); // jump to error if it is boolean 
-                    instrs.push(Instr::Mov(Reg::Rcx, tag_number(1)));
-                    instrs.push(Instr::AddReg(Reg::Rax, Reg::Rcx));
-                    instrs.push(Instr::Jo("overflow_error".to_string()));
-                }
-                Op1::Sub1 => {
-                    instrs.push(Instr::Test(Reg::Rax, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
-                    instrs.push(Instr::Jnz("type_error_arithmetic".to_string())); // jump to error if it is boolean 
-                    instrs.push(Instr::Mov(Reg::Rcx, tag_number(-1)));
-                    instrs.push(Instr::AddReg(Reg::Rax, Reg::Rcx));
-                    instrs.push(Instr::Jo("overflow_error".to_string()));
-                }
-                Op1::IsNum => {
-                    // Check if tag bit (bit 0) is 0 (number)
-                    instrs.push(Instr::Test(Reg::Rax, 1)); // Test bit 0
-                    instrs.push(Instr::Mov(Reg::Rax, 0)); // Clear RAX
-                    instrs.push(Instr::SetEq(Reg::Rax)); // Set AL to 1 if zero flag is set (tag == 0)
-                    instrs.push(Instr::Shl(Reg::Rax, 1)); // Shift left to make room for tag
-                    instrs.push(Instr::Or(Reg::Rax, 1)); // Set tag bit to 1 (boolean)
-                }
-                Op1::IsBool => {
-                    let label_id = {
-                        let mut shared = ctx.shared_ctx.borrow_mut();
-                        let id = shared.label_counter;
-                        shared.label_counter += 1;
-                        id
-                    };
-                    let skip_label = format!("isbool_skip_{}", label_id);
-
-                    instrs.push(Instr::Test(Reg::Rax, 1)); instrs.push(Instr::Mov(Reg::Rax, 0)); // Clear RAX
-                    instrs.push(Instr::Jz(skip_label.clone())); // If zero (not bool), skip set
-                    instrs.push(Instr::Mov(Reg::Rax, 1)); // Set to 1 if bool
-                    instrs.push(Instr::Label(skip_label));
-                    instrs.push(Instr::Shl(Reg::Rax, 1)); // Shift left to make room for tag
-                    instrs.push(Instr::Or(Reg::Rax, 1)); // Set tag bit to 1 (boolean)
+                    err_if(&mut instrs, Condition::NotEqual, RuntimeErr::ArithmeticType); // jump to error if it is boolean 
+                    instrs.push(if let Op1::Add1 = op {Instr::Add(Reg::Rax, 2)} else {Instr::Sub(Reg::Rax, 2)});
+                    err_if(&mut instrs, Condition::Overflow, RuntimeErr::Overflow);
                 }
             }
             instrs
@@ -110,85 +93,56 @@ fn compile_expr_define_env(
                 stack_depth + 8,
                 ctx.clone(),
             ));
+            instrs.push(Instr::MovFromStack(Reg::Rcx, stack_depth)); 
             match op {
                 Op2::Equal => {
-                    instrs.push(Instr::MovFromStack(Reg::Rcx, stack_depth)); 
-
                     // Type check: both must be same type
                     instrs.push(Instr::MovReg(Reg::Rdx, Reg::Rcx)); 
                     instrs.push(Instr::XorReg(Reg::Rdx, Reg::Rax)); 
                     instrs.push(Instr::Test(Reg::Rdx, 1)); 
                     // If bit 0 is set, types differ -> error
-                    instrs.push(Instr::Jnz("type_mismatch_error".to_string()));
+                    err_if(&mut instrs, Condition::NotEqual, RuntimeErr::TypeMismatch);
 
                     // Types match, do comparison
                     instrs.push(Instr::Cmp(Reg::Rcx, Reg::Rax));
-                    instrs.push(Instr::SetEq(Reg::Rax));
-
-                    // Tag as boolean
-                    instrs.push(Instr::Shl(Reg::Rax, 1));
-                    instrs.push(Instr::Or(Reg::Rax, 1));
+                    check(&mut instrs, Condition::Equal);
                 }
-                Op2::Less | Op2::Greater | Op2::LessEqual | Op2::GreaterEqual => {
-                    instrs.push(Instr::MovFromStack(Reg::Rcx, stack_depth));
-                    // Type check: both must be same type
-                    instrs.push(Instr::MovReg(Reg::Rdx, Reg::Rcx)); 
-                    instrs.push(Instr::XorReg(Reg::Rdx, Reg::Rax)); 
-                    instrs.push(Instr::Test(Reg::Rdx, 1)); 
-                    instrs.push(Instr::Jnz("type_mismatch_error".to_string()));
-
-                    instrs.push(Instr::Cmp(Reg::Rcx, Reg::Rax));
+                _ => {
+                    // type check 
+                    instrs.push(Instr::Test(Reg::Rcx, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
+                    err_if(&mut instrs, Condition::NotEqual, RuntimeErr::ArithmeticType);
+                    instrs.push(Instr::Test(Reg::Rax, 1));
+                    err_if(&mut instrs, Condition::NotEqual, RuntimeErr::ArithmeticType); 
+                    // end type check 
 
                     match op {
-                        Op2::Less => instrs.push(Instr::SetL(Reg::Rax)),
-                        Op2::Greater => instrs.push(Instr::SetG(Reg::Rax)),
-                        Op2::LessEqual => instrs.push(Instr::SetLE(Reg::Rax)),
-                        Op2::GreaterEqual => instrs.push(Instr::SetGE(Reg::Rax)),
-                        _ => unreachable!(),
+                        Op2::Plus => {
+                            instrs.push(Instr::AddReg(Reg::Rax, Reg::Rcx));
+                            err_if(&mut instrs, Condition::Overflow, RuntimeErr::Overflow);
+                        },
+                        Op2::Minus => {
+                            instrs.push(Instr::MinusReg(Reg::Rcx, Reg::Rax));
+                            instrs.push(Instr::MovReg(Reg::Rax, Reg::Rcx));
+                            err_if(&mut instrs, Condition::Overflow, RuntimeErr::Overflow);
+                        },
+                        Op2::Times => {
+                            instrs.push(Instr::Sar(Reg::Rax, 1));
+                            instrs.push(Instr::IMul(Reg::Rax, Reg::Rcx));
+                            err_if(&mut instrs, Condition::Overflow, RuntimeErr::Overflow);
+                        }
+                        _ => {
+                            instrs.push(Instr::Cmp(Reg::Rcx, Reg::Rax));
+                            let cond = match op {
+                                Op2::Less => Condition::Less,
+                                Op2::LessEqual => Condition::LessEqual,
+                                Op2::Greater => Condition::Greater,
+                                Op2::GreaterEqual => Condition::GreaterEqual,
+                                _ => unreachable!()
+                            };
+                            check(&mut instrs, cond);
+                        }
                     }
 
-                    // Tag as boolean
-                    instrs.push(Instr::Shl(Reg::Rax, 1));
-                    instrs.push(Instr::Or(Reg::Rax, 1));
-                }
-                Op2::Plus => {
-                    instrs.push(Instr::MovFromStack(Reg::Rcx, stack_depth));
-                    // type check 
-                    instrs.push(Instr::Test(Reg::Rcx, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
-                    instrs.push(Instr::Jnz("type_error_arithmetic".to_string())); // jump to error if it is boolean 
-                    instrs.push(Instr::Test(Reg::Rax, 1));
-                    instrs.push(Instr::Jnz("type_error_arithmetic".to_string())); 
-                    // end type check 
-
-                    instrs.push(Instr::AddReg(Reg::Rax, Reg::Rcx));
-                    instrs.push(Instr::Jo("overflow_error".to_string()));
-                }
-                Op2::Minus => {
-                    instrs.push(Instr::MovFromStack(Reg::Rcx, stack_depth));
-                    // type check 
-                    instrs.push(Instr::Test(Reg::Rcx, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
-                    instrs.push(Instr::Jnz("type_error_arithmetic".to_string())); // jump to error if it is boolean 
-                    instrs.push(Instr::Test(Reg::Rax, 1));
-                    instrs.push(Instr::Jnz("type_error_arithmetic".to_string())); 
-                    // end type check 
-                    instrs.push(Instr::MinusReg(Reg::Rcx, Reg::Rax));
-                    instrs.push(Instr::MovReg(Reg::Rax, Reg::Rcx));
-                    instrs.push(Instr::Jo("overflow_error".to_string()));
-                }
-                Op2::Times => {
-                    instrs.push(Instr::MovFromStack(Reg::Rcx, stack_depth));
-                    // type check 
-                    instrs.push(Instr::Test(Reg::Rcx, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
-                    instrs.push(Instr::Jnz("type_error_arithmetic".to_string())); // jump to error if it is boolean 
-                    instrs.push(Instr::Test(Reg::Rax, 1));
-                    instrs.push(Instr::Jnz("type_error_arithmetic".to_string())); 
-                    // end type check 
-                    instrs.push(Instr::Sar(Reg::Rax, 1)); // untag rax by shifting right
-                    instrs.push(Instr::Sar(Reg::Rcx, 1)); // untag rcx by shifting right
-                    instrs.push(Instr::iMul(Reg::Rax, Reg::Rcx)); // multiply untagged * untagged
-                    instrs.push(Instr::Jo("overflow_error".to_string()));
-                    instrs.push(Instr::Shl(Reg::Rax, 1)); // shift result left to tag it
-                    instrs.push(Instr::Jo("overflow_error".to_string()));
                 }
                 _ => panic!("Invalid op {:?}!", op),
             }
@@ -240,12 +194,7 @@ fn compile_expr_define_env(
 
             vec![]
         }
-        ExprT::Boolean(b, _) => {
-            if *b == true {
-                return vec![Instr::Mov(Reg::Rax, TRUE_TAGGED)];
-            }
-            vec![Instr::Mov(Reg::Rax, FLASE_TAGGED)]
-        }
+        
         ExprT::Block(exprs, _) => {
             let mut instrs: Vec<Instr> = vec![];
 
@@ -281,7 +230,7 @@ fn compile_expr_define_env(
                 stack_depth,
                 loop_ctx.clone(),
             ));
-            instrs.push(Instr::Jmp(loop_label.clone()));
+            instrs.push(Instr::Jump(Condition::Uncond, loop_label.clone()));
             instrs.push(Instr::Label(end_loop_label));
             instrs
         }
@@ -296,7 +245,7 @@ fn compile_expr_define_env(
                 ctx.clone(),
             ));
             let loop_end_label = format!("endloop_{}", ctx.current_loop_id);
-            instrs.push(Instr::Jmp(loop_end_label));
+            instrs.push(Instr::Jump(Condition::Uncond, loop_end_label));
             instrs
         }
         ExprT::Set(name, e, _) => {
@@ -347,10 +296,10 @@ fn compile_expr_define_env(
                 ctx.clone(),
             ));
 
-            instrs.push(Instr::CmpImm(Reg::Rax, FLASE_TAGGED));
+            instrs.push(Instr::CmpImm(Reg::Rax, FALSE_TAGGED));
 
             // 3. Jump to else branch if condition equals false
-            instrs.push(Instr::Je(else_label.clone()));
+            instrs.push(Instr::Jump(Condition::Equal, else_label.clone()));
 
             instrs.extend(compile_expr_define_env(
                 then_expr,
@@ -359,7 +308,7 @@ fn compile_expr_define_env(
             ));
 
             // 5. Jump to end (skip else branch)
-            instrs.push(Instr::Jmp(end_label.clone()));
+            instrs.push(Instr::Jump(Condition::Uncond, end_label.clone()));
 
             // 6. Else branch label
             instrs.push(Instr::Label(else_label));
@@ -425,14 +374,14 @@ fn compile_expr_define_env(
             match target_type {
                 TypeInfo::Num => {
                     instrs.push(Instr::Test(Reg::Rax, 1));
-                    instrs.push(Instr::Jnz("bad_cast_error".to_string()));
+                    err_if(&mut instrs, Condition::NotEqual, RuntimeErr::BadCast);
                 }
                 TypeInfo::Bool => {
                     instrs.push(Instr::Test(Reg::Rax, 1));
-                    instrs.push(Instr::Jz("bad_cast_error".to_string()));
+                    err_if(&mut instrs, Condition::Equal, RuntimeErr::BadCast);
                 }
                 TypeInfo::Nothing => {
-                    instrs.push(Instr::Jmp("bad_cast_error".to_string()));
+                    err_if(&mut instrs, Condition::Uncond, RuntimeErr::BadCast);
                 }
                 TypeInfo::Any => {
                     // No check needed, any value is valid
@@ -467,7 +416,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 
     let mut instrs = Vec::new();
 
-    instrs.push(Instr::Jmp("main_start".to_string()));
+    instrs.push(Instr::Jump(Condition::Uncond, "main_start".to_string()));
 
     for defn in &prog.defns {
         instrs.push(Instr::Label(defn.name.clone()));
@@ -624,5 +573,5 @@ pub fn jit_code_input(instrs: &Vec<Instr>, input: i64) -> i64 {
 }
 
 pub fn jit_code(instrs: &Vec<Instr>) -> i64 {
-    jit_code_input(instrs, FLASE_TAGGED)
+    jit_code_input(instrs, FALSE_TAGGED)
 }

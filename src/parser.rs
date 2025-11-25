@@ -17,9 +17,9 @@ pub fn parse_expr(s: &Sexp) -> Expr {
         }
         Sexp::Atom(S(name)) => {
             /* Check is boolean */
-            if (name == "true") {
+            if name == "true" {
                 return Expr::Boolean(true);
-            } else if (name == "false") {
+            } else if name == "false" {
                 return Expr::Boolean(false);
             }
             Expr::Id(name.to_string())
