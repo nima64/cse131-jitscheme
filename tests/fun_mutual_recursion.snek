@@ -1,15 +1,15 @@
 (fun (ping n)
-  (if (= n 0)
-    n
-    (+ (pong (sub1 n)) 1)
+  (if (= (cast Num n) (cast Num 0))
+    (cast Num n)
+    (+ (cast Num (pong (cast Num (sub1 (cast Num n))))) (cast Num 1))
   )
 )
 
 (fun (pong n)
-  (if (= n 0)
-    n
-    (ping (sub1 n))
+  (if (= (cast Num n) (cast Num 0))
+    (cast Num n)
+    (cast Num (ping (cast Num (sub1 (cast Num n)))))
   )
 )
 
-(print (ping 50))
+(print (ping (cast Num 50)))

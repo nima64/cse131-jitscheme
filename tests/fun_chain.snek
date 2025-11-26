@@ -1,21 +1,21 @@
 (fun (add5 n)
-  (+ n 5)
+  (+ (cast Num n) 5)
 )
 
 (fun (mul2 n)
-  (* (add5 n) 2)
+  (* (cast Num (add5 n)) 2)
 )
 
 (fun (sub3 n)
-  (- (mul2 n) 3)
+  (- (cast Num (mul2 n)) 3)
 )
 
 (fun (add10 n)
-  (+ (sub3 n) 10)
+  (+ (cast Num (sub3 n)) 10)
 )
 
 (fun (final n)
   (print (add10 n))
 )
 
-(final 1)
+(final (cast Num 1))

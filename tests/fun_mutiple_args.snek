@@ -1,3 +1,3 @@
 (fun (mulAll b c d e f g h i j k)
-    (* b (* c (* d (* e (* f (* g (* h (* i (* j k))))))))))
-(mulAll 1 2 3 4 5 6 7 8 9 10)
+    (* (cast Num b) (* (cast Num c) (* (cast Num d) (* (cast Num e) (* (cast Num f) (* (cast Num g) (* (cast Num h) (* (cast Num i) (* (cast Num j) (cast Num k)))))))))))
+(mulAll (cast Num 1) (cast Num 2) (cast Num 3) (cast Num 4) (cast Num 5) (cast Num 6) (cast Num 7) (cast Num 8) (cast Num 9) (cast Num 10))

@@ -1,20 +1,20 @@
 (fun (isodd n)
-  (if (< n 0)
-      (isodd (- 0 n))
-      (if (= n 0)
+  (if (< (cast Num n) (cast Num 0))
+      (isodd (- (cast Num 0) (cast Num n)))
+      (if (= (cast Num n) (cast Num 0))
           false
-          (iseven (sub1 n))
+          (iseven (cast Num (sub1 (cast Num n))))
       )
   )
 )
 
 (fun (iseven n)
-  (if (= n 0)
+  (if (= (cast Num n) (cast Num 0))
       true
-      (isodd (sub1 n))
+      (isodd (cast Num (sub1 (cast Num n))))
   )
 )
 
 (block
-  (print (iseven 99))
+  (print (iseven (cast Num 99)))
 )
